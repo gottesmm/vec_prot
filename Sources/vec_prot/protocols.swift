@@ -1,14 +1,19 @@
 
 import Swift
 
+/// A type that can be used as an element in a MySIMD vector.
+public protocol MySIMDScalar {
+  associatedtype MySIMD4Storage: MySIMDStorageImpl where MySIMD4Storage.Scalar == Self
+}
+
 public protocol MySIMDStorage {
-  associatedtype Scalar
+  associatedtype Scalar : MySIMDScalar
+
   var scalarCount: Int { get }
   init()
   subscript(index: Int) -> Scalar { get set }
 
-  associatedtype HasVectorTy = Never
-  static var hasVectorRepresentation: Bool { get }
+  var hasVectorRepr : Bool { get }
 }
 
 extension MySIMDStorage {
@@ -17,45 +22,53 @@ extension MySIMDStorage {
     return Self().scalarCount
   }
 
-  static public var hasVectorRepresentation: Bool {
-    @_transparent get { return false }
-  }
-}
-
-// NOTE: This is not a public protocol on purpose!
-public protocol LLVMVector {
-  associatedtype Scalar
-}
-
-public protocol MySIMDVectorStorage : MySIMDStorage {
-  associatedtype Vector : LLVMVector where Vector.Scalar == Scalar
-}
-
-extension MySIMDVectorStorage {
-  public typealias HasVectorTy = Bool
-  public var hasVectorRepresentation: Bool {
-    @_transparent get { return true }
-  }
-}
-
-/// A type that can be used as an element in a MySIMD vector.
-public protocol MySIMDScalar {
-  associatedtype MySIMD4Storage: MySIMDStorage where MySIMD4Storage.Scalar == Self
-}
-
-public protocol MySIMD : MySIMDStorage {}
-
-extension MySIMD {
-  /// The valid indices for subscripting the vector.
   @_transparent
-  public var indices: Range<Int> {
-    return 0 ..< scalarCount
+  public var hasVectorRepr : Bool { return false }
+}
+
+public protocol MySIMDStorageImpl : MySIMDStorage {
+  static func add(_ lhs: Self, _ rhs: Self) -> Self
+}
+
+extension MySIMDStorageImpl {
+  public static func add(_ lhs: Self, _ rhs: Self) -> Self {
+    print(type(of: lhs))
+    fatalError("Should never call this function!")
   }
 }
 
-@_fixed_layout
-public struct MySIMD4<Scalar> : MySIMD where Scalar : MySIMDScalar {
-  public var _storage : Scalar.MySIMD4Storage
+// MG: Note how we constraint Vector.Scalar on Scalar here. We do not care about
+// the actual value of Vector in MySIMDStorage since we will either fatalError
+// in MySIMDStorage.init or return nil in getAsSIMD()
+//
+// NOTE: This subprotocol of MySIMDStorage _MUST BE INTERNAL_.
+protocol MySIMDVectorStorageImpl : MySIMDStorageImpl {
+  associatedtype Vector
+
+  init(_ value: Vector)
+  var vector : Vector { get }
+
+  //static func add(lhs: Self, rhs: Self) -> Self
+
+  var hasVectorRepr: Bool { get }
+}
+
+extension MySIMDVectorStorageImpl {
+  @_transparent
+  static func add(lhs: Self, rhs: Self) -> Self {
+    fatalError("From MySIMDVectorStorage")
+  }
+
+  @_transparent
+  public var hasVectorRepr: Bool { return true }
+}
+
+public protocol MySIMD : MySIMDStorageImpl {
+}
+
+@frozen
+public struct MySIMD4<ScalarTy> : MySIMD where ScalarTy : MySIMDScalar {
+  public var _storage : ScalarTy.MySIMD4Storage
 
   @_transparent
   public var scalarCount: Int {
@@ -64,16 +77,26 @@ public struct MySIMD4<Scalar> : MySIMD where Scalar : MySIMDScalar {
 
   @_transparent
   public init() {
-    _storage = Scalar.MySIMD4Storage()
+    _storage = ScalarTy.MySIMD4Storage()
   }
 
   /// Accesses the scalar at the specified position.
-  public subscript(index: Int) -> Scalar {
+  public subscript(index: Int) -> ScalarTy {
     @_transparent get {
       return _storage[index]
     }
     @_transparent set {
       _storage[index] = newValue
     }
+  }
+
+  @_transparent
+  public var hasVectorRepr : Bool { return _storage.hasVectorRepr }
+
+  @_transparent
+  public static func add(_ lhs: Self, _ rhs: Self) -> Self {
+    var result = Self()
+    result._storage = ScalarTy.MySIMD4Storage.add(lhs._storage, rhs._storage)
+    return result
   }
 }
