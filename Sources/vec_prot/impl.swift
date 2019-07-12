@@ -7,39 +7,41 @@ import Swift
 @frozen
 public enum _SIMDNever {}
 
-// =============================================================================
-
-// Wraps around a concrete builtin SIMD vector type and uses builtin operations
-public protocol _SIMDVector {
-  static func add(_ lhs: Self, _ rhs: Self) -> Self
-
-  // ...
-}
-
-extension _SIMDNever: _SIMDVector {
-  public static func add(_ lhs: Self, _ rhs: Self) -> Self {}
-
-  // ...
-}
+// A `Never`-like type for default implementations that provides a SIMDScalar
+// based T for use in where requirements.
+//
+// This is necessary for the following code to properly compile:
+//
+// extension _SIMDGenericNever: _SIMDStorageWithOps {
+//   public typealias Scalar = T
+//   public typealias _InnerStorage = _SIMDGenericNever<T>
+//   ...
+// }
+//
+// Given that we want _InnerStorage.Scalar to equal specific Scalar values to
+// appease the type checker. If one does not need this functionality, just pass
+// _SIMDNever as the generic parameter since it is a SIMDScalar.
+@frozen
+public enum _SIMDGenericNever<T : SIMDScalar> {}
 
 // =============================================================================
 
 public protocol SIMDStorage {
   associatedtype Scalar: SIMDScalar
 
-  associatedtype _Vector: _SIMDVector = _SIMDNever
+  associatedtype _InnerStorage: _SIMDStorageWithOps = _SIMDGenericNever<_SIMDNever> where _InnerStorage.Scalar == Self.Scalar
 
   static var _hasVectorRepresentation: Bool { get }
 
   static var scalarCount: Int { get }
 
-  var _vector: _Vector { get }
+  var _innerStorage: _InnerStorage { get set }
 
   var scalarCount: Int { get }
 
   init()
 
-  init(_vector: _Vector)
+  init(_storage: _InnerStorage)
 
   subscript(index: Int) -> Scalar { get set }
 }
@@ -50,11 +52,18 @@ extension SIMDStorage {
     return false
   }
 
-  public var _vector: _Vector {
+  public var _innerStorage: _InnerStorage {
     @inline(never)
     get {
       // Will never be called unless `_hasVectorRepresentation == true`,
       // in which case this implementation would be overriden in stdlib
+      fatalError("""
+        Error! Called default SIMDStorage._vector impl?! A SIMDStorage class
+        overrides _hasVectorRepresentation to return true, but did not provide
+        an implementation for this method as well!
+        """)
+    }
+    set {
       fatalError("""
         Error! Called default SIMDStorage._vector impl?! A SIMDStorage class
         overrides _hasVectorRepresentation to return true, but did not provide
@@ -73,7 +82,7 @@ extension SIMDStorage {
   }
 
   @inline(never)
-  public init(_vector: _Vector) {
+  public init(_storage: _InnerStorage) {
     // Will never be called unless `_hasVectorRepresentation == true`, in
     // which case this implementation would be overriden in stdlib
     fatalError("""
@@ -84,8 +93,56 @@ extension SIMDStorage {
   }
 }
 
-extension _SIMDNever: SIMDStorage {
+public protocol _SIMDStorageWithOps : SIMDStorage {
+  static func add(_ lhs: Self, _ rhs: Self) -> Self
+}
+
+extension _SIMDStorageWithOps {
+  @_transparent
+  public static func add(_ lhs: Self, _ rhs: Self) -> Self {
+    fatalError("In default SIMDStorageWithOps add impl")
+  }
+}
+
+extension _SIMDNever: _SIMDStorageWithOps {
   public typealias Scalar = _SIMDNever
+  public typealias _InnerStorage = _SIMDNever
+
+  public static func add(_ lhs: Self, _ rhs: Self) -> Self {}
+  public static var scalarCount: Int {
+    @inline(never)
+    get {
+      switch Self() {}
+    }
+  }
+
+  public var _innerStorage: _InnerStorage {
+    get {
+      switch Self() {}
+    }
+    set {
+    }
+  }
+
+  public subscript(index: Int) -> Scalar {
+    @inline(never)
+    get {
+      switch self {}
+    }
+    set {}
+  }
+
+  @inline(never)
+  public init() {
+    fatalError("\(Self.self) cannot be instantiated")
+  }
+}
+
+extension _SIMDGenericNever: _SIMDStorageWithOps {
+  public typealias Scalar = T
+  public typealias _InnerStorage = _SIMDGenericNever<T>
+
+  public static func add(_ lhs: Self, _ rhs: Self) -> Self {}
 
   public static var scalarCount: Int {
     @inline(never)
@@ -106,6 +163,14 @@ extension _SIMDNever: SIMDStorage {
   public init() {
     fatalError("\(Self.self) cannot be instantiated")
   }
+
+  public var _innerStorage: _InnerStorage {
+    get {
+      switch Self() {}
+    }
+    set {
+    }
+  }
 }
 
 // =============================================================================
@@ -113,7 +178,7 @@ extension _SIMDNever: SIMDStorage {
 public protocol SIMDScalar {
   // ...
 
-  associatedtype SIMD4Storage: SIMDStorage where SIMD4Storage.Scalar == Self
+  associatedtype SIMD4Storage: _SIMDStorageWithOps where SIMD4Storage.Scalar == Self
 
   // ...
 }
@@ -129,8 +194,6 @@ extension _SIMDNever: SIMDScalar {
 // =============================================================================
 
 public protocol SIMD: SIMDStorage {
-  associatedtype _InnerStorage : SIMDStorage where _InnerStorage._Vector == Self._Vector
-  var _innerStorage: _InnerStorage { get set }
 }
 
 extension SIMD {
@@ -143,14 +206,9 @@ extension SIMD {
   // ...
 
   @_transparent
-  public var _vector: _Vector {
-    return _innerStorage._vector
-  }
-
-  @_transparent
-  public init(_vector: _Vector) {
+  public init(_storage: _InnerStorage) {
     self.init()
-    _innerStorage = _InnerStorage(_vector: _vector)
+    _innerStorage = _storage
   }
 }
 
@@ -161,10 +219,10 @@ extension SIMD where Scalar: FixedWidthInteger {
     // branch is very likely in a generic context
     if _fastPath(Self._hasVectorRepresentation) {
       // Delegate to concrete operations on `Self._Vector`
-      let lVec = lhs._vector
-      let rVec = rhs._vector
-      let result = Self._Vector.add(lVec, rVec)
-      return Self(_vector: result)
+      let lVec = lhs._innerStorage
+      let rVec = rhs._innerStorage
+      let result = Self._InnerStorage.add(lVec, rVec)
+      return Self(_storage: result)
     }
 
     // Slow fallback
@@ -182,7 +240,6 @@ extension SIMD where Scalar: FixedWidthInteger {
 @frozen
 public struct SIMD4<Scalar: SIMDScalar>: SIMD {
   public typealias _InnerStorage = Scalar.SIMD4Storage
-  public typealias _Vector = _InnerStorage._Vector
 
   public var _innerStorage: _InnerStorage {
     @_transparent
@@ -222,28 +279,27 @@ public struct SIMD4<Scalar: SIMDScalar>: SIMD {
   // ...
 }
 
+public protocol _SIMDVectorStorage : _SIMDStorageWithOps {
+  // Must be a builtin type.
+  associatedtype _Vector
+}
+
 // =============================================================================
 
 extension Int32: SIMDScalar {
   @frozen
-  public struct SIMD4Storage: SIMDStorage {
+  public struct SIMD4Storage: _SIMDVectorStorage {
     public typealias Scalar = Int32
+    public typealias _InnerStorage = _SIMDGenericNever<Scalar>
+    public typealias _Vector = Builtin.Vec4xInt32
 
-    @frozen
-    @_alignment(16) // 4x4
-    public struct _Vector: _SIMDVector, RawRepresentable {
-      public var rawValue: Builtin.Vec4xInt32
-
-      @_transparent
-      public init(rawValue: RawValue) {
-        self.rawValue = rawValue
-      }
-
-      @_transparent
-      public static func add(_ lhs: Self, _ rhs: Self) -> Self {
-        return Self(rawValue: Builtin.add_Vec4xInt32(lhs.rawValue, rhs.rawValue))
-      }
+// ENABLE this for vector code.
+#if !ENABLE_GENERIC_IMPL
+    @_transparent
+    public static func add(_ lhs: Self, _ rhs: Self) -> Self {
+      return Self(_vector: Builtin.add_Vec4xInt32(lhs._vector, rhs._vector))
     }
+#endif
 
     public static var _hasVectorRepresentation: Bool {
       @_transparent get {
@@ -253,7 +309,7 @@ extension Int32: SIMDScalar {
 
     public static var scalarCount: Int {
       @_transparent get {
-        return 2
+        return 4
       }
     }
 
@@ -262,13 +318,62 @@ extension Int32: SIMDScalar {
     public subscript(index: Int) -> Scalar {
       @_transparent get {
         return Int32(Builtin.extractelement_Vec4xInt32_Int32(
-            _vector.rawValue,
+            _vector,
             Int32(truncatingIfNeeded: index)._value
           ))
       }
       @_transparent set {
-        _vector.rawValue = Builtin.insertelement_Vec4xInt32_Int32_Int32(
-          _vector.rawValue,
+        _vector = Builtin.insertelement_Vec4xInt32_Int32_Int32(
+          _vector,
+          newValue._value,
+          Int32(truncatingIfNeeded: index)._value
+        )
+      }
+    }
+
+    @_transparent
+    public init() {
+      _vector = Builtin.zeroInitializer()
+    }
+
+    @_transparent
+    public init(_vector: _Vector) {
+      self._vector = _vector
+    }
+  }
+}
+
+extension Int64: SIMDScalar {
+  @frozen
+  public struct SIMD4Storage: _SIMDStorageWithOps {
+    public typealias Scalar = Int64
+    public typealias _InnerStorage = _SIMDGenericNever<Scalar>
+    public typealias _Vector = Builtin.Vec4xInt64
+
+    public static var _hasVectorRepresentation: Bool {
+      @_transparent get {
+        return false
+      }
+    }
+
+    public static var scalarCount: Int {
+      @_transparent get {
+        return 4
+      }
+    }
+
+    public var _vector: _Vector
+
+    public subscript(index: Int) -> Scalar {
+      @_transparent get {
+        return Int64(Builtin.extractelement_Vec4xInt64_Int32(
+            _vector,
+            Int32(truncatingIfNeeded: index)._value
+          ))
+      }
+      @_transparent set {
+        _vector = Builtin.insertelement_Vec4xInt64_Int64_Int32(
+          _vector,
           newValue._value,
           Int32(truncatingIfNeeded: index)._value
         )
