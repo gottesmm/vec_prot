@@ -51,7 +51,8 @@ extension SIMDStorage {
   }
 
   public var _vector: _Vector {
-    @_transparent get {
+    @inline(never)
+    get {
       // Will never be called unless `_hasVectorRepresentation == true`,
       // in which case this implementation would be overriden in stdlib
       fatalError("""
@@ -65,12 +66,13 @@ extension SIMDStorage {
   // Previously, the static `scalarCount` was defined in terms of this
   // property; also I think this property should be deprecated altogether
   public var scalarCount: Int {
-    @_transparent get {
+    @_transparent
+    get {
       return Self.scalarCount
     }
   }
 
-  @_transparent
+  @inline(never)
   public init(_vector: _Vector) {
     // Will never be called unless `_hasVectorRepresentation == true`, in
     // which case this implementation would be overriden in stdlib
@@ -86,19 +88,21 @@ extension _SIMDNever: SIMDStorage {
   public typealias Scalar = _SIMDNever
 
   public static var scalarCount: Int {
-    @_transparent get {
+    @inline(never)
+    get {
       switch Self() {}
     }
   }
 
   public subscript(index: Int) -> Scalar {
-    @_transparent get {
+    @inline(never)
+    get {
       switch self {}
     }
-    @_transparent set {}
+    set {}
   }
 
-  @_transparent
+  @inline(never)
   public init() {
     fatalError("\(Self.self) cannot be instantiated")
   }
@@ -125,7 +129,8 @@ extension _SIMDNever: SIMDScalar {
 // =============================================================================
 
 public protocol SIMD: SIMDStorage {
-  // ...
+  associatedtype _InnerStorage : SIMDStorage where _InnerStorage._Vector == Self._Vector
+  var _innerStorage: _InnerStorage { get set }
 }
 
 extension SIMD {
@@ -136,25 +141,37 @@ extension SIMD {
   }
 
   // ...
+
+  @_transparent
+  public var _vector: _Vector {
+    return _innerStorage._vector
+  }
+
+  @_transparent
+  public init(_vector: _Vector) {
+    self.init()
+    _innerStorage = _InnerStorage(_vector: _vector)
+  }
 }
 
 extension SIMD where Scalar: FixedWidthInteger {
-  @_transparent
+  //@_transparent
   public static func &+(lhs: Self, rhs: Self) -> Self {
     // We'll almost always be calling this on stdlib SIMD types, so this
     // branch is very likely in a generic context
     if _fastPath(Self._hasVectorRepresentation) {
       // Delegate to concrete operations on `Self._Vector`
-      return Self(_vector: Self._Vector.add(
-          lhs._vector,
-          rhs._vector
-        ))
+      let lVec = lhs._vector
+      let rVec = rhs._vector
+      let result = Self._Vector.add(lVec, rVec)
+      return Self(_vector: result)
     }
 
     // Slow fallback
     var result = Self()
     for i in result.indices { result[i] = lhs[i] &+ rhs[i] }
     return result
+
   }
 
   // ...
@@ -164,6 +181,16 @@ extension SIMD where Scalar: FixedWidthInteger {
 
 @frozen
 public struct SIMD4<Scalar: SIMDScalar>: SIMD {
+  public typealias _InnerStorage = Scalar.SIMD4Storage
+  public typealias _Vector = _InnerStorage._Vector
+
+  public var _innerStorage: _InnerStorage {
+    @_transparent
+    get { return _storage }
+    @_transparent
+    set { _storage = newValue }
+  }
+
   public static var _hasVectorRepresentation: Bool {
     @_transparent get {
       return Scalar.SIMD4Storage._hasVectorRepresentation
