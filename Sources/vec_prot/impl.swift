@@ -155,7 +155,7 @@ extension SIMD {
 }
 
 extension SIMD where Scalar: FixedWidthInteger {
-  //@_transparent
+  @_transparent
   public static func &+(lhs: Self, rhs: Self) -> Self {
     // We'll almost always be calling this on stdlib SIMD types, so this
     // branch is very likely in a generic context
