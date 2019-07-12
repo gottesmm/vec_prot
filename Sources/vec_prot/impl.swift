@@ -54,7 +54,11 @@ extension SIMDStorage {
     @_transparent get {
       // Will never be called unless `_hasVectorRepresentation == true`,
       // in which case this implementation would be overriden in stdlib
-      fatalError()
+      fatalError("""
+        Error! Called default SIMDStorage._vector impl?! A SIMDStorage class
+        overrides _hasVectorRepresentation to return true, but did not provide
+        an implementation for this method as well!
+        """)
     }
   }
 
@@ -70,7 +74,11 @@ extension SIMDStorage {
   public init(_vector: _Vector) {
     // Will never be called unless `_hasVectorRepresentation == true`, in
     // which case this implementation would be overriden in stdlib
-    fatalError()
+    fatalError("""
+      Error! Called default SIMDStorage.init(_vector) impl?! A SIMDStorage class
+      overrides _hasVectorRepresentation to return true, but did not provide an
+      implementation for this method as well!
+      """)
   }
 }
 
