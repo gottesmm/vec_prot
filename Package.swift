@@ -21,7 +21,7 @@ let package = Package(
     .target(
       name: "vec_prot",
       dependencies: [],
-      swiftSettings: [.unsafeFlags(["-parse-stdlib"])]),
+      swiftSettings: [.unsafeFlags(["-parse-stdlib", "-enable-library-evolution"])]),
     .testTarget(
       name: "vec_protTests",
       dependencies: ["vec_prot"]),
